@@ -2,6 +2,7 @@ name: Verify
 on: [push, pull_request]
 jobs:
   test:
+    name: OTel ${{ matrix.otel }} / AI SDK 6 + 7
     runs-on: ubuntu-latest
     strategy:
       matrix:

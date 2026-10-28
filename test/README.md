@@ -11,13 +11,16 @@ Run `npm ci && npm run verify`. Nothing is deployed and no credentials are neede
 - `wide/bundled.mjs` tests each instrumentation constructor in actual Worker/DO bundles and verifies the fetch wrapper's non-recording CLIENT spans. Constructor success alone is not treated as functioning instrumentation.
 - `wide/sentry-registration.test.mjs` checks both setup orders; `wide/sentry-durable.ts` exercises the real Sentry Durable Object wrapper with an in-memory transport.
 - `suppression.test.ts` uses the real OTel core suppression functions and verifies no native span is created. The regression fails against version 0.1.2.
+- `lifecycle/ai.mjs` exercises real AI SDK v6/v7, `@ai-sdk/otel`, and Agents `wrapAISDK()` separately and together. Model tests check completion, in-band errors, aborts, early exits, streaming tools, application async-local state and duplicate producers. `lifecycle/reference-sdk.test.ts` reproduces the v6 cancellation leak with `BasicTracerProvider` and `AlwaysOnSampler` (native flags do not encode sampling).
+- `runtime-lifecycle.test.mjs` runs the same six producer combinations and seven lifecycle scenarios in Workers and Durable Objects, inspecting exported native parent IDs and closure. It also checks response streams, Worker/DO `waitUntil`, stale cross-invocation context, UTF-8 name limits, oversized annotations and continued recording afterward. Test-only cleanup of known producer leaks is explicit and happens after reporting them. Escaped-span fixtures deliberately retain live objects to verify failure containment; this is not a recommended application pattern.
+- `runtime-harness.mjs` supplies the shared local runtime and Local Explorer query helpers. No remote resources are created.
 - `runtime.test.mjs` verifies native spans through Local Explorer, including overlapping Worker/DO calls and an actual Vite module reload. The existing AI SDK, waitUntil, alarm and WebSocket regressions remain in place.
 
 Braintrust uses its own in-memory background logger; lazy export metadata is not evaluated, so no login or network export occurs. Langfuse tests install no processor/exporter. All payloads are synthetic.
 
 The root npm overrides keep exactly one OTel API in this test environment: some pinned instrumentation packages require API 1.10 while SDK 2 peer ranges exclude it. The bridge supplies the provider; normal producers use the bridge provider; conflict tests intentionally initialize Sentry's provider. SvelteKit's TypeScript peer is overridden to the project's compiler because only its published JS helper is used. These overrides are not required by consumers of the adapter.
 
-CI exercises API 1.9 and 1.10. `api-version.mjs` selects compatible, pinned instrumentation versions for each job. Instrumentation 0.300 and newer Pino/Winston packages import the Logs API from API 1.10; overriding their peer range cannot supply those exports. The API 1.9 job uses the preceding instrumentation generation. Other producer versions remain unchanged.
+CI exercises API 1.9 and 1.10, with both AI SDK majors and Agents in each job. `api-version.mjs` selects compatible, pinned instrumentation versions for each job. Instrumentation 0.300 and newer Pino/Winston packages import the Logs API from API 1.10; overriding their peer range cannot supply those exports. The API 1.9 job uses the preceding instrumentation generation. Other producer versions remain unchanged.
 
 To run both variants locally:
 

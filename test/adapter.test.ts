@@ -274,3 +274,22 @@ test('no-op active spans preserve promise identity and synchronous errors', () =
   const error = new Error('application failure');
   expect(() => tracer.startActiveSpan('root', { root: true }, () => { throw error; })).toThrow(error);
 }));
+
+test('native span names preserve UTF-8 boundaries at the runtime byte limit', () => invocation(() => {
+  for (const [name, expected] of [
+    ['x'.repeat(64), 'x'.repeat(64)], ['x'.repeat(65), 'x'.repeat(64)],
+    ['界'.repeat(22), '界'.repeat(21)], ['🙂'.repeat(17), '🙂'.repeat(16)],
+    ['x'.repeat(63) + '界', 'x'.repeat(63)], ['\uFEFF' + 'x'.repeat(64), '\uFEFF' + 'x'.repeat(61)],
+  ] as const) {
+    const manual = tracer.startSpan(name);
+    expect(recorded.at(-1)?.name).toBe(expected);
+    manual.end();
+    tracer.startActiveSpan(name, span => {
+      expect(recorded.at(-1)?.name).toBe(expected);
+      span.updateName('short').updateName(name);
+      expect(recorded.at(-1)?.name).toBe(expected);
+      expect(expected).not.toContain('\uFFFD');
+      span.end();
+    });
+  }
+}));

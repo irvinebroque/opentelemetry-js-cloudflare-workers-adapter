@@ -20,6 +20,7 @@ const usage = {
 };
 const telemetry = { isEnabled: true, recordInputs: false, recordOutputs: false };
 let retained: Span | undefined;
+let escapedContext: ReturnType<typeof context.active> | undefined;
 let retainedNative: ReturnType<typeof tracing.startSpan> | undefined;
 
 export default {
@@ -37,12 +38,42 @@ export default {
     }
     if (url.pathname === '/do/sentry') return Response.json(await workerExports.SentryObject.getByName('sentry').probe());
     if (url.pathname === '/do/wide') return Response.json(await workerExports.TestObject.getByName('wide').wide(url.searchParams.get('name')!));
+    if (url.pathname === '/lifecycle') {
+      // @ts-expect-error Shared JS fixture uses both published AI SDK majors.
+      return Response.json(await (await import('./lifecycle/ai.mjs')).exerciseAI(url.searchParams.get('variant'), url.searchParams.get('scenario')));
+    }
+    if (url.pathname === '/do/lifecycle') return Response.json(await workerExports.TestObject.getByName('lifecycle').lifecycle(url.searchParams.get('variant')!, url.searchParams.get('scenario')!));
+    if (url.pathname === '/limits') {
+      // @ts-expect-error Runtime-only size-boundary fixture.
+      return Response.json((await import('./lifecycle/limits.mjs')).exerciseLimits());
+    }
+    if (url.pathname === '/response-stream') {
+      return tracer.startActiveSpan('lifecycle.response', span => {
+        const ids = span.spanContext();
+        let sent = false;
+        return new Response(new ReadableStream({
+          async pull(controller) {
+            assert.equal(trace.getActiveSpan(), span);
+            if (sent) { span.end(); controller.close(); return; }
+            await scheduler.wait(5);
+            const child = tracer.startSpan('lifecycle.response.chunk');
+            child.end();
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ parent: ids, child: child.spanContext() })));
+            sent = true;
+          },
+          cancel() { span.end(); },
+        }));
+      });
+    }
     if (url.pathname === '/ready') return new Response(reloadToken);
     if (url.pathname === '/integrations') return Response.json(await Promise.all(libraries.map(exerciseLibrary)));
     if (url.pathname === '/prisma') return Response.json(await exercisePrisma(_env.TEST_DB));
     if (url.pathname === '/bundled') return Response.json(await exerciseBundledInstrumentation(Number(url.searchParams.get('port')), Number(url.searchParams.get('errors'))));
     if (url.pathname.startsWith('/do')) {
       const object = workerExports.TestObject.getByName(url.searchParams.get('id') ?? 'test');
+      if (url.pathname === '/do/background') return Response.json(await object.background());
+      if (url.pathname === '/do/escape') return Response.json(await object.escape());
+      if (url.pathname === '/do/resume') return Response.json(await object.resume());
       if (url.pathname === '/do/fetch') return object.fetch('https://example.com/fetch');
       if (url.pathname === '/do/websocket') return object.fetch(new Request('https://example.com/websocket', request));
       if (url.pathname === '/do/schedule') { await object.schedule(); return new Response('scheduled'); }
@@ -51,6 +82,25 @@ export default {
       if (url.pathname === '/do/bundled') return Response.json(await object.bundled(Number(url.searchParams.get('port')), Number(url.searchParams.get('errors'))));
       if (url.pathname === '/do/prisma') return Response.json(await object.prisma());
       return Response.json(await object.probe(crypto.randomUUID()));
+    }
+    if (url.pathname === '/escape') {
+      const escaped = tracer.startSpan('lifecycle.escaped');
+      escapedContext = trace.setSpan(context.active(), escaped);
+      return Response.json(escaped.spanContext()); // Deliberate unended-span misuse.
+    }
+    if (url.pathname === '/resume') {
+      const current = trace.getActiveSpan()!.spanContext();
+      assert.ok(escapedContext);
+      context.with(escapedContext, () => {
+        const escaped = trace.getActiveSpan()!;
+        escaped.setAttribute('late', true); escaped.recordException('late'); escaped.end();
+        tracer.startActiveSpan('lifecycle.invalid-resume', child => {
+          assert.equal(child.isRecording(), false);
+          assert.deepEqual(child.spanContext(), escaped.spanContext());
+        });
+      });
+      assert.deepEqual(trace.getActiveSpan()!.spanContext(), current);
+      return Response.json(current);
     }
     if (url.pathname === '/retain') {
       // Deliberate misuse regression: only IDs can safely survive an invocation.

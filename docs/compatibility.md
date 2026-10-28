@@ -17,10 +17,7 @@ and `head_sampling_rate`.
 
 ## Tested libraries
 
-**AI SDK 6.0.316:** `generateText()` and `streamText()` record spans with
-`experimental_telemetry` enabled. Generation, streaming and failures have tests;
-generation and streaming also run in real workerd with native parent IDs checked.
-Tests use a mock model. Consume or cancel streams according to the SDK's lifecycle.
+AI SDK and Agents have a separate [compatibility matrix below](#ai-sdk-and-agents).
 
 The following ten integrations have tests using their published code. **Passing a compatibility test does not mean every operation records a native span.**
 
@@ -70,6 +67,62 @@ The API 1.9 job uses the previous instrumentation releases, selected in `test/ap
 
 Tests assert exact known runtime failures so an unexpected error or changed dependency behavior fails the suite. Passing a boundary test means the limitation was reproduced, not that native spans were recorded.
 
+## AI SDK and Agents
+
+Tested with AI SDK **6.0.316**, AI SDK **7.0.155**, `@ai-sdk/otel` **1.0.155** and Agents **0.31.0**. Synthetic models exercise generation, failures, deferred stream consumption, in-band stream errors, cancellation, early consumer exit, and streaming tools. The same cases run in Workers and Durable Objects; native exported IDs and parents are checked.
+
+| Setup | What the tests establish |
+| --- | --- |
+| AI SDK v6 + bridge | Generation and normally consumed streams record nested OTel spans. Cancellation leaves `ai.streamText.doStream` open in this AI SDK release. |
+| AI SDK v7 + `@ai-sdk/otel` + bridge | Operation spans record. Explicit-parent step/tool spans and CLIENT model spans fall back to non-recording spans. This is partial tracing, not a complete model/tool tree. |
+| Agents `wrapAISDK()` + bridge, AI SDK v6 or v7 | Agents creates native operation/model/tool spans. The bridge exposes the active native span to OTel code; supported OTel children nest beneath it. |
+| Agents wrapper + AI SDK OTel instrumentation + bridge | Both producers run and create duplicate operation instrumentation. Prefer one producer for each AI call. |
+
+### AI SDK v7 setup
+
+The v6 `experimental_telemetry.isEnabled` setting alone is insufficient in v7. Install `@ai-sdk/otel` and configure its integration, in addition to registering this bridge:
+
+```ts
+import { generateText } from 'ai'; // v7
+import { OpenTelemetry } from '@ai-sdk/otel';
+
+await generateText({
+  model,
+  prompt,
+  telemetry: {
+    integrations: [new OpenTelemetry()],
+    recordInputs: false,
+    recordOutputs: false,
+  },
+});
+```
+
+The integration uses `startSpan()` plus manual context activation, and CLIENT spans for model calls. The bridge cannot turn those into a faithful native child tree with the current runtime APIs.
+
+### Agents coexistence
+
+For the Agents span structure, use its wrapper and disable the AI SDK's separate OTel producer for that call:
+
+```ts
+import * as ai from 'ai';
+import { wrapAISDK } from 'agents/observability/ai';
+
+const tracedAI = wrapAISDK(ai);
+await tracedAI.generateText({
+  model,
+  prompt,
+  telemetry: { isEnabled: false }, // AI SDK v7; use experimental_telemetry in v6
+});
+```
+
+The bridge preserves span names and attributes supplied by each producer. It does not convert arbitrary OTel spans into Agents dashboard semantics, add agent identity, or redact payloads. Configure identity and payload capture using the [Agents tracing documentation](https://developers.cloudflare.com/agents/runtime/operations/observability/tracing/).
+
+### Span lifetime
+
+Always consume or cancel streams according to the producer's contract. Early exit from AI SDK's text stream can leave other stream branches running; our tests abort and drain the remaining stream before checking completion. Even after that, v6's model span remains open on cancellation. `reference-sdk.test.ts` reproduces this with the reference OTel SDK and an always-on sampler. Tests report the leak before cleaning up their own spans. The bridge does not automatically end producer-owned spans or infer error/cancellation status.
+
+Agents manages its own span lifetime, including streaming tools. Its async-context snapshots are specific to those wrappers. The bridge deliberately does not restore all application async-local state when activating an OTel context.
+
 ## Workers and Durable Objects
 
 **Pi Durable:** [PiHarness supports Pi Durable in Agents/Durable Objects](https://developers.cloudflare.com/changelog/post/2026-10-02-pi-harness/). Register in the hosting Worker when its libraries use the OTel API. This does not add Pi-specific instrumentation or preserve live contexts across durable restarts; PiHarness has not been integration-tested here.
@@ -109,7 +162,7 @@ For unsupported creation, a valid requested parent's entire `SpanContext` is ret
 
 No propagator is registered. Native `traceFlags` currently does not express Cloudflare's sampling decision: it is returned unchanged and must not be used to construct outbound `traceparent` headers. Observability-disabled IDs may be zero; logs-only invocations may have IDs without stored traces. When a native child has no valid IDs, the adapter retains its requested parent's IDs in a non-recording span. See the [native API contract](https://developers.cloudflare.com/workers/observability/traces/custom-spans/).
 
-Telemetry failures, including expired native request objects and invalid annotation data, are contained and reported without payloads. Application callbacks still run once, and their return values, promises, and exceptions are preserved. This does not reactivate expired spans or allow I/O across requests. Native limits also apply: span names are limited to 64 bytes and attribute/exception data to 64 KiB per span. Those limits can truncate names or drop annotations.
+Telemetry failures, including expired native request objects and invalid annotation data, are contained and reported without payloads. Application callbacks still run once, and their return values, promises, and exceptions are preserved. This does not reactivate expired spans or allow I/O across requests. Native limits also apply: span names are limited to 64 bytes and attribute/exception data to 64 KiB per span. The bridge truncates names at a complete UTF-8 character within 64 bytes, including renames; the runtime can drop annotations that exceed its data budget. Tests verify that oversized attributes/exceptions do not break application work or later spans.
 
 Unsupported creation and annotations produce once-per-feature OTel diagnostics, with no user payloads. Enable diagnostics before running instrumented code to see them:
 

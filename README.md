@@ -86,7 +86,7 @@ console.log({ message: 'Handling request', trace_id: ids?.traceId, span_id: ids?
 IDs can be missing or zero when tracing is unavailable. Use them for logs;
 do not build outgoing `traceparent` headers from them. [Why?](docs/compatibility.md#context-boundaries)
 
-**Enable AI SDK tracing:**
+**Enable AI SDK v6 tracing:**
 
 ```ts
 import { generateText } from 'ai';
@@ -101,6 +101,8 @@ await generateText({
   },
 });
 ```
+
+Using AI SDK v7 or Agents `wrapAISDK()`? [Check their setup and limitations](docs/compatibility.md#ai-sdk-and-agents).
 
 **Trace a step yourself:**
 

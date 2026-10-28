@@ -9,6 +9,41 @@ const tracer = trace.getTracer('durable-test');
 const requestKey = createContextKey('durable-request');
 
 export class TestObject extends DurableObject<Env> {
+  private escapedContext?: ReturnType<typeof context.active>;
+  escape() {
+    const span = tracer.startSpan('lifecycle.do.escaped');
+    this.escapedContext = trace.setSpan(context.active(), span);
+    return span.spanContext();
+  }
+  resume() {
+    const current = trace.getActiveSpan()!.spanContext();
+    assert.ok(this.escapedContext);
+    context.with(this.escapedContext, () => {
+      const escaped = trace.getActiveSpan()!;
+      escaped.setAttribute('late', true); escaped.end();
+      const child = tracer.startSpan('lifecycle.do.invalid-resume');
+      assert.equal(child.isRecording(), false);
+      assert.deepEqual(child.spanContext(), escaped.spanContext());
+    });
+    assert.deepEqual(trace.getActiveSpan()!.spanContext(), current);
+    return current;
+  }
+  background() {
+    return tracer.startActiveSpan('lifecycle.do.background', span => {
+      this.ctx.waitUntil((async () => {
+        try {
+          await scheduler.wait(20);
+          assert.equal(trace.getActiveSpan(), span);
+          tracer.startSpan('lifecycle.do.background.child').end();
+        } finally { span.end(); }
+      })());
+      return span.spanContext();
+    });
+  }
+  async lifecycle(variant: string, scenario: string) {
+    // @ts-expect-error Shared JS fixture uses both published AI SDK majors.
+    return (await import('./lifecycle/ai.mjs')).exerciseAI(variant, scenario);
+  }
   async wideBundled(url: string) {
     // @ts-expect-error JS bundle-resolution fixture.
     return (await import('./wide/bundled.mjs')).bundleProbes(url);

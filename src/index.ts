@@ -25,6 +25,18 @@ function safely<T>(fn: () => T): T | undefined {
   try { return fn(); } catch { unsupported('telemetry operation failed (ignored)'); }
 }
 
+// The native byte limit can cut through a UTF-8 character. Truncate at a
+// character boundary before passing names to the runtime.
+function nativeName(name: string): string {
+  if (typeof name !== 'string') return 'unnamed';
+  const bytes = new TextEncoder().encode(name);
+  if (bytes.length <= 64) return name;
+  let end = 64;
+  while ((bytes[end]! & 0xc0) === 0x80) end--;
+  unsupported('span names over 64 UTF-8 bytes (truncated)');
+  return new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes.subarray(0, end));
+}
+
 function wrap(native: NativeSpan): Span {
   let span = spans.get(native);
   if (!span) spans.set(native, span = new WorkersSpan(native));
@@ -66,7 +78,7 @@ class WorkersSpan implements Span {
     return this;
   }
   updateName(name: string): this {
-    if (typeof name === 'string') safely(() => this.native.updateName(name));
+    if (typeof name === 'string') safely(() => this.native.updateName(nativeName(name)));
     return this;
   }
   recordException(exception: Exception, time?: TimeInput): void {
@@ -171,7 +183,7 @@ const tracer: Tracer = {
     parent ??= context.active();
     const noop = nonRecording(options, parent);
     return safely(() => !suppressed(parent) && canCreate(options, noop, implicit)
-      ? created(tracing.startSpan(typeof name === 'string' ? name : 'unnamed'), options, noop) : noop) ?? noop;
+      ? created(tracing.startSpan(nativeName(name)), options, noop) : noop) ?? noop;
   },
   startActiveSpan<F extends (span: Span) => unknown>(
     name: string, optionsOrFn: SpanOptions | F | undefined,
@@ -189,7 +201,7 @@ const tracer: Tracer = {
     // The native callback activates platform children; OTel owns span.end().
     let entered = false;
     try {
-      return tracing.startActiveSpan(typeof name === 'string' ? name : 'unnamed', native => {
+      return tracing.startActiveSpan(nativeName(name), native => {
         const span = created(native, options, noop);
         entered = true;
         return run(span);
@@ -207,7 +219,7 @@ const provider: TracerProvider = { getTracer: () => tracer };
 let registered: TracerProvider | undefined;
 // Dev module reloads and duplicate bundles can share an isolate's OTel globals.
 // Only reuse this exact adapter version while its provider remains installed.
-const registrationKey = Symbol.for('opentelemetry-js-cloudflare-workers-adapter@0.1.3');
+const registrationKey = Symbol.for('opentelemetry-js-cloudflare-workers-adapter@0.1.4');
 type Registration = { provider: TracerProvider; register: () => TracerProvider };
 
 /** Register once at Worker module scope. Conflicting OTel registrations throw. */
