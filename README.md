@@ -19,8 +19,7 @@ This bridge supports **part of the tracing API**. See [Cloudflare's native traci
 ### 1. Copy the adapter into your project
 
 We recommend vendoring the adapter: copy [src/index.ts](src/index.ts) into your
-Worker project as `src/otel.ts`. Keep a copy of [LICENSE](LICENSE) alongside it
-as `src/otel.LICENSE`.
+Worker project as `src/otel.ts`.
 
 Use your project's existing `@opentelemetry/api` (1.9+) or add it:
 
