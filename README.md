@@ -1,6 +1,6 @@
 # OpenTelemetry → Workers tracing
 
-Let your existing OpenTelemetry (OTel) code use Cloudflare Workers' built-in tracing.
+Let your existing OpenTelemetry (OTel) code use [Cloudflare Workers' built-in tracing](https://developers.cloudflare.com/workers/observability/traces/).
 
 This bridge connects the OTel API your libraries call to the tracing built into Workers.
 
@@ -12,7 +12,7 @@ flowchart LR
   workers --> destination["Datadog, etc."]
 ```
 
-This bridge supports **part of the tracing API**. See [compatibility details](docs/compatibility.md).
+This bridge supports **part of the tracing API**. See [Cloudflare's native tracing API](https://developers.cloudflare.com/workers/observability/traces/custom-spans/) and [this bridge's compatibility details](docs/compatibility.md).
 
 ## Get started
 
