@@ -21,13 +21,13 @@ This bridge supports **part of the tracing API**. See [Cloudflare's native traci
 We recommend vendoring the adapter: copy [src/index.ts](src/index.ts) into your
 Worker project as `src/otel.ts`.
 
-Use your project's existing `@opentelemetry/api` (1.9+) or add it:
+Use your project's existing `@opentelemetry/api` (1.x, version 1.9 or later) or add it:
 
 ```sh
 npm install '@opentelemetry/api@^1.9.0'
 ```
 
-The adapter is now part of your code. No adapter package or build step is needed.
+Your Worker build includes this file. There is no separate adapter package to install or build.
 
 ### 2. Turn on Workers tracing
 
@@ -63,9 +63,12 @@ register();
 ```
 
 Remove your old tracing setup first, such as `otel-cf-workers` or `NodeSDK`.
-Repeated calls and dev reloads are safe; a different installed provider causes an error.
+Repeated calls and dev reloads reuse the same adapter version while it remains registered.
+A competing OTel provider or context manager causes an error.
 
-Your libraries can keep using their usual OTel imports.
+Libraries using the global OTel API can keep their usual imports. Libraries with
+their own providers or Node auto-instrumentation need extra care; see the
+[compatibility details](docs/compatibility.md#tested-libraries).
 
 ## Common examples
 
@@ -102,6 +105,8 @@ await generateText({
 **Trace a step yourself:**
 
 ```ts
+import { trace } from '@opentelemetry/api';
+
 const tracer = trace.getTracer('my-worker');
 
 await tracer.startActiveSpan('load-data', async span => {
@@ -123,9 +128,11 @@ flowchart TD
   step --> library["Other supported library spans"]
 ```
 
-Always end spans you create. In Durable Objects, create fresh spans for each call;
+Always end spans you create. Record exceptions and set error status explicitly when needed.
+In Durable Objects, create fresh spans for each call;
 keep live spans and contexts out of object fields and storage.
-Use `ctx.waitUntil()` for work that must continue after returning a response.
+Use `ctx.waitUntil()` (`this.ctx.waitUntil()` in a Durable Object) for background work
+that must continue after returning a response.
 
 ## Limits to know
 
@@ -134,11 +141,12 @@ Use `ctx.waitUntil()` for work that must continue after returning a response.
 | Spans under the current native parent | New roots, different parents, non-`INTERNAL` span kinds, custom start times and creation links do not record. |
 | Text, number and boolean attributes | Arrays and objects are dropped. |
 | Status, rename and exceptions | Other events and links are dropped. Custom end/exception times are ignored. |
-| Async OTel context and baggage | `context.with()` cannot make an existing span active in the runtime. Use `startActiveSpan()` for native nesting. |
+| Async OTel context and local baggage | `context.with()` cannot make an existing span active in the runtime. Use `startActiveSpan()` for native nesting. |
 | Tracing | OTel metrics, the logs SDK and SDK span processors are outside this bridge. |
 
-When a span cannot be recorded, **your callback still runs**. The bridge keeps valid
-parent IDs when available; it does not invent a new span.
+When a span cannot be recorded, **your callback still runs**. Unsupported spans
+reuse valid parent IDs when available; new roots and suppressed spans have invalid IDs.
+The bridge does not install a propagator for sending context or baggage between services.
 
 To see unsupported operations:
 
