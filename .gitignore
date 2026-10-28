@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-worker/
+.cloudflare/
+.wrangler/
+*.tgz
+.env*
+.dev.vars*
+coverage/
+test/generated/

@@ -1,0 +1,19 @@
+name: Verify
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        otel: ['1.9.0', '1.10.0']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+          cache: npm
+      - run: npm ci
+      # Test-only override keeps one API copy despite integration SDK peer ranges.
+      - run: node test/api-version.mjs '${{ matrix.otel }}' && npm install --package-lock=false
+      - run: npm run verify
+      - run: npm pack --dry-run
