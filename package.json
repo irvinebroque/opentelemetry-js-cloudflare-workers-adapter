@@ -76,7 +76,7 @@
     "@prisma/client": "7.10.1",
     "@prisma/instrumentation": "7.10.1",
     "@sentry/cloudflare": "11.9.0",
-    "@sveltejs/kit": "3.1.0",
+    "@sveltejs/kit": "3.2.0",
     "@types/node": "^24.19.2",
     "@types/pg": "8.23.1",
     "agents": "0.31.0",
